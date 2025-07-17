@@ -805,61 +805,86 @@ def dashboard():
             const gridDiv = document.getElementById('stocksGrid');
             gridDiv.innerHTML = '';
             
-            stocks.forEach(stock => {
-                const signalClass = stock.signal.toLowerCase().replace(' ', '-');
-                const oneWeekData = stock.probability_ranges && stock.probability_ranges['1_week'];
+
+stocks.forEach(stock => {
+    const signalClass = stock.signal.toLowerCase().replace(' ', '-');
+    
+    const card = document.createElement('div');
+    card.className = 'stock-card';
+    
+    // Create predictions HTML for all timeframes
+    let predictionsHTML = '';
+    if (stock.probability_ranges) {
+        const timeframes = {
+            '1_week': '📅 1 Week',
+            '1_month': '📅 1 Month', 
+            '3_months': '📅 3 Months'
+        };
+        
+        for (const [period, title] of Object.entries(timeframes)) {
+            const data = stock.probability_ranges[period];
+            if (data) {
+                const expectedChange = ((data.expected_price - stock.current_price) / stock.current_price * 100);
+                const changeClass = expectedChange > 0 ? 'risk-positive' : expectedChange < 0 ? 'risk-negative' : 'risk-neutral';
                 
-                const card = document.createElement('div');
-                card.className = 'stock-card';
-                card.innerHTML = `
-                    <div class="stock-header">
-                        <div class="symbol">${stock.symbol}</div>
-                        <div class="signal ${signalClass}">${stock.signal}</div>
-                    </div>
-                    
-                    <div class="price-info">
-                        <div class="price-item">
-                            <div class="price-label">Current Price</div>
-                            <div class="price-value">${stock.current_price}</div>
+                predictionsHTML += `
+                    <div class="prediction" style="margin-bottom: 10px;">
+                        <div class="prediction-title">${title}</div>
+                        <div class="prediction-item">
+                            <span>Expected:</span>
+                            <span class="${changeClass}">$${data.expected_price.toFixed(2)} (${expectedChange > 0 ? '+' : ''}${expectedChange.toFixed(1)}%)</span>
                         </div>
-                        <div class="price-item">
-                            <div class="price-label">Confidence</div>
-                            <div class="price-value">${stock.confidence}%</div>
+                        <div class="prediction-item">
+                            <span>68% Range:</span>
+                            <span>$${data.prob_68_range[0].toFixed(2)} - $${data.prob_68_range[1].toFixed(2)}</span>
+                        </div>
+                        <div class="prediction-item">
+                            <span>95% Range:</span>
+                            <span>$${data.prob_95_range[0].toFixed(2)} - $${data.prob_95_range[1].toFixed(2)}</span>
                         </div>
                     </div>
-                    
-                    <div class="metrics">
-                        <div class="metric">
-                            <div class="metric-label">RSI</div>
-                            <div class="metric-value">${stock.rsi}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">Volatility</div>
-                            <div class="metric-value">${stock.volatility}%</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">Volume</div>
-                            <div class="metric-value">${(stock.volume / 1000000).toFixed(1)}M</div>
-                        </div>
-                    </div>
-                    
-                    ${oneWeekData ? `
-                        <div class="prediction">
-                            <div class="prediction-title">📅 1 Week Prediction</div>
-                            <div class="prediction-item">
-                                <span>Expected:</span>
-                                <span>${oneWeekData.expected_price.toFixed(2)}</span>
-                            </div>
-                            <div class="prediction-item">
-                                <span>68% Range:</span>
-                                <span>${oneWeekData.prob_68_range[0].toFixed(2)} - ${oneWeekData.prob_68_range[1].toFixed(2)}</span>
-                            </div>
-                        </div>
-                    ` : ''}
                 `;
-                
-                gridDiv.appendChild(card);
-            });
+            }
+        }
+    }
+    
+    card.innerHTML = `
+        <div class="stock-header">
+            <div class="symbol">${stock.symbol}</div>
+            <div class="signal ${signalClass}">${stock.signal}</div>
+        </div>
+        
+        <div class="price-info">
+            <div class="price-item">
+                <div class="price-label">Current Price</div>
+                <div class="price-value">$${stock.current_price}</div>
+            </div>
+            <div class="price-item">
+                <div class="price-label">Confidence</div>
+                <div class="price-value">${stock.confidence}%</div>
+            </div>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">RSI</div>
+                <div class="metric-value">${stock.rsi}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Volatility</div>
+                <div class="metric-value">${stock.volatility}%</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Volume</div>
+                <div class="metric-value">${(stock.volume / 1000000).toFixed(1)}M</div>
+            </div>
+        </div>
+        
+        ${predictionsHTML}
+    `;
+    
+    gridDiv.appendChild(card);
+});
         }
     </script>
 </body>
