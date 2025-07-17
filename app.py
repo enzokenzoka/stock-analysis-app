@@ -267,6 +267,624 @@ class PortfolioManager:
 # Create portfolio manager instance
 portfolio_manager = PortfolioManager()
 
+# ===== DYNAMIC STOCK LIST MANAGEMENT =====
+
+class StockListManager:
+    def __init__(self):
+        self.db_name = 'portfolio.db'
+        self.init_watchlist_table()
+        self.init_default_stocks()
+    
+    def init_watchlist_table(self):
+        """Initialize watchlist table"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT UNIQUE,
+                    company_name TEXT,
+                    sector TEXT,
+                    market_cap TEXT,
+                    added_by_user BOOLEAN DEFAULT TRUE,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            print("✅ Watchlist table created")
+            
+        except Exception as e:
+            print(f"❌ Error creating watchlist table: {e}")
+    
+    def init_default_stocks(self):
+        """Initialize with default popular stocks if empty"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # Check if watchlist is empty
+            cursor.execute("SELECT COUNT(*) FROM watchlist")
+            count = cursor.fetchone()[0]
+            
+            if count == 0:
+                # Add default popular stocks
+                default_stocks = [
+                    ('AAPL', 'Apple Inc.', 'Technology', 'Large Cap'),
+                    ('GOOGL', 'Alphabet Inc.', 'Technology', 'Large Cap'),
+                    ('MSFT', 'Microsoft Corporation', 'Technology', 'Large Cap'),
+                    ('TSLA', 'Tesla Inc.', 'Automotive', 'Large Cap'),
+                    ('AMZN', 'Amazon.com Inc.', 'Consumer Discretionary', 'Large Cap'),
+                    ('META', 'Meta Platforms Inc.', 'Technology', 'Large Cap'),
+                    ('NVDA', 'NVIDIA Corporation', 'Technology', 'Large Cap'),
+                    ('NFLX', 'Netflix Inc.', 'Communication Services', 'Large Cap'),
+                    ('UBER', 'Uber Technologies Inc.', 'Technology', 'Large Cap'),
+                    ('SNAP', 'Snap Inc.', 'Communication Services', 'Mid Cap'),
+                    ('ZOOM', 'Zoom Video Communications', 'Technology', 'Mid Cap'),
+                    ('PLTR', 'Palantir Technologies Inc.', 'Technology', 'Mid Cap'),
+                    ('COIN', 'Coinbase Global Inc.', 'Financial Services', 'Mid Cap'),
+                    ('RBLX', 'Roblox Corporation', 'Communication Services', 'Mid Cap'),
+                    ('SHOP', 'Shopify Inc.', 'Technology', 'Large Cap'),
+                    ('SQ', 'Block Inc.', 'Technology', 'Mid Cap'),
+                    ('PYPL', 'PayPal Holdings Inc.', 'Financial Services', 'Large Cap'),
+                    ('ADBE', 'Adobe Inc.', 'Technology', 'Large Cap'),
+                    ('CRM', 'Salesforce Inc.', 'Technology', 'Large Cap'),
+                    ('SPOT', 'Spotify Technology SA', 'Communication Services', 'Mid Cap')
+                ]
+                
+                for symbol, name, sector, market_cap in default_stocks:
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO watchlist 
+                        (symbol, company_name, sector, market_cap, added_by_user, is_active)
+                        VALUES (?, ?, ?, ?, FALSE, TRUE)
+                    ''', (symbol, name, sector, market_cap))
+                
+                conn.commit()
+                print(f"✅ Added {len(default_stocks)} default stocks to watchlist")
+            
+            conn.close()
+            
+        except Exception as e:
+            print(f"❌ Error initializing default stocks: {e}")
+    
+    def get_active_stocks(self):
+        """Get list of active stocks for analysis"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT symbol FROM watchlist 
+                WHERE is_active = TRUE 
+                ORDER BY symbol
+            ''')
+            
+            stocks = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            
+            return stocks
+            
+        except Exception as e:
+            print(f"❌ Error getting active stocks: {e}")
+            return ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN']  # Fallback
+    
+    def get_watchlist_details(self):
+        """Get detailed watchlist with company info"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT symbol, company_name, sector, market_cap, is_active, added_by_user, created_at
+                FROM watchlist 
+                ORDER BY symbol
+            ''')
+            
+            watchlist = []
+            for row in cursor.fetchall():
+                watchlist.append({
+                    'symbol': row[0],
+                    'company_name': row[1],
+                    'sector': row[2],
+                    'market_cap': row[3],
+                    'is_active': bool(row[4]),
+                    'added_by_user': bool(row[5]),
+                    'created_at': row[6]
+                })
+            
+            conn.close()
+            return watchlist
+            
+        except Exception as e:
+            print(f"❌ Error getting watchlist details: {e}")
+            return []
+    
+    def add_stock_to_watchlist(self, symbol, company_name=None):
+        """Add new stock to watchlist"""
+        try:
+            symbol = symbol.upper().strip()
+            
+            # Validate stock symbol using yfinance
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            
+            if not info or 'symbol' not in info:
+                return {"success": False, "message": f"Invalid stock symbol: {symbol}"}
+            
+            # Get company info if not provided
+            if not company_name:
+                company_name = info.get('longName', info.get('shortName', symbol))
+            
+            sector = info.get('sector', 'Unknown')
+            market_cap = info.get('marketCap', 0)
+            
+            # Determine market cap category
+            if market_cap > 200_000_000_000:
+                market_cap_category = 'Large Cap'
+            elif market_cap > 10_000_000_000:
+                market_cap_category = 'Mid Cap'
+            elif market_cap > 2_000_000_000:
+                market_cap_category = 'Small Cap'
+            else:
+                market_cap_category = 'Micro Cap'
+            
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO watchlist 
+                (symbol, company_name, sector, market_cap, added_by_user, is_active)
+                VALUES (?, ?, ?, ?, TRUE, TRUE)
+            ''', (symbol, company_name, sector, market_cap_category))
+            
+            conn.commit()
+            conn.close()
+            
+            return {
+                "success": True, 
+                "message": f"Added {symbol} ({company_name}) to watchlist",
+                "details": {
+                    "symbol": symbol,
+                    "company_name": company_name,
+                    "sector": sector,
+                    "market_cap": market_cap_category
+                }
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"Error adding {symbol}: {str(e)}"}
+    
+    def remove_stock_from_watchlist(self, symbol):
+        """Remove stock from watchlist"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('DELETE FROM watchlist WHERE symbol = ?', (symbol.upper(),))
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                conn.close()
+                return {"success": True, "message": f"Removed {symbol} from watchlist"}
+            else:
+                conn.close()
+                return {"success": False, "message": f"{symbol} not found in watchlist"}
+            
+        except Exception as e:
+            return {"success": False, "message": f"Error removing {symbol}: {str(e)}"}
+    
+    def toggle_stock_active(self, symbol, is_active):
+        """Enable/disable stock in analysis without removing from watchlist"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE watchlist 
+                SET is_active = ? 
+                WHERE symbol = ?
+            ''', (is_active, symbol.upper()))
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                conn.close()
+                status = "enabled" if is_active else "disabled"
+                return {"success": True, "message": f"{symbol} {status} for analysis"}
+            else:
+                conn.close()
+                return {"success": False, "message": f"{symbol} not found in watchlist"}
+            
+        except Exception as e:
+            return {"success": False, "message": f"Error updating {symbol}: {str(e)}"}
+
+# Create stock list manager instance
+stock_list_manager = StockListManager()
+
+
+@app.route('/watchlist')
+def watchlist_page():
+    """Watchlist management page"""
+    return render_template_string('''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>📋 Stock Watchlist - Manage Your Stocks</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        
+        .nav-links { text-align: center; margin-bottom: 30px; }
+        .nav-link { 
+            color: white; 
+            text-decoration: none; 
+            margin: 0 15px; 
+            padding: 10px 20px; 
+            border: 2px solid white; 
+            border-radius: 25px; 
+            transition: all 0.3s;
+            display: inline-block;
+        }
+        .nav-link:hover { background: white; color: #667eea; transform: translateY(-2px); }
+        .nav-link.active { background: white; color: #667eea; }
+        
+        .add-stock-section {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .add-stock-input {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            margin: 0 10px;
+            width: 200px;
+        }
+        .add-stock-btn {
+            background: linear-gradient(45deg, #27ae60, #2ecc71);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+        .add-stock-btn:hover { transform: translateY(-2px); }
+        
+        .watchlist-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        .stat-value { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .stat-label { color: #666; margin-top: 5px; }
+        
+        .watchlist-table {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        .table-header {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 15px;
+            display: grid;
+            grid-template-columns: 80px 1fr 150px 120px 100px 120px 100px;
+            gap: 15px;
+            font-weight: bold;
+        }
+        .table-row {
+            padding: 15px;
+            display: grid;
+            grid-template-columns: 80px 1fr 150px 120px 100px 120px 100px;
+            gap: 15px;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+        }
+        .table-row:hover { background: #f8f9fa; }
+        .table-row:last-child { border-bottom: none; }
+        
+        .symbol { font-weight: bold; color: #2c3e50; }
+        .company-name { color: #666; font-size: 14px; }
+        .status-active { color: #28a745; font-weight: bold; }
+        .status-inactive { color: #dc3545; font-weight: bold; }
+        .btn { 
+            padding: 5px 10px; 
+            border: none; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            font-size: 12px; 
+            margin: 0 2px;
+        }
+        .btn-toggle { background: #ffc107; color: white; }
+        .btn-remove { background: #dc3545; color: white; }
+        .btn:hover { transform: translateY(-1px); }
+        
+        .loading { text-align: center; padding: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 Stock Watchlist</h1>
+            <p>Manage which stocks to analyze</p>
+        </div>
+        
+        <div class="nav-links">
+            <a href="/" class="nav-link">🏠 Home</a>
+            <a href="/portfolio" class="nav-link">📊 Portfolio</a>
+            <a href="/watchlist" class="nav-link active">📋 Watchlist</a>
+        </div>
+        
+        <div class="add-stock-section">
+            <h3>Add New Stock</h3>
+            <input type="text" id="newStockSymbol" class="add-stock-input" placeholder="Enter stock symbol (e.g., AAPL)" maxlength="10">
+            <button class="add-stock-btn" onclick="addStock()">➕ Add Stock</button>
+            <button class="add-stock-btn" onclick="loadWatchlist()" style="background: #3498db;">🔄 Refresh</button>
+        </div>
+        
+        <div class="watchlist-stats" id="watchlistStats">
+            <div class="stat-card">
+                <div class="stat-value" id="totalStocks">0</div>
+                <div class="stat-label">Total Stocks</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="activeStocks">0</div>
+                <div class="stat-label">Active for Analysis</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="userAdded">0</div>
+                <div class="stat-label">Added by You</div>
+            </div>
+        </div>
+        
+        <div class="watchlist-table">
+            <div class="table-header">
+                <div>Symbol</div>
+                <div>Company</div>
+                <div>Sector</div>
+                <div>Market Cap</div>
+                <div>Status</div>
+                <div>Source</div>
+                <div>Actions</div>
+            </div>
+            <div id="watchlistData">
+                <div class="loading">Loading watchlist...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function loadWatchlist() {
+            fetch('/api/watchlist')
+                .then(response => response.json())
+                .then(data => {
+                    displayWatchlist(data);
+                    updateStats(data);
+                })
+                .catch(error => {
+                    console.error('Error loading watchlist:', error);
+                    document.getElementById('watchlistData').innerHTML = 
+                        '<div class="loading">Error loading watchlist</div>';
+                });
+        }
+        
+        function displayWatchlist(stocks) {
+            const container = document.getElementById('watchlistData');
+            container.innerHTML = '';
+            
+            if (stocks.length === 0) {
+                container.innerHTML = '<div class="loading">No stocks in watchlist</div>';
+                return;
+            }
+            
+            stocks.forEach(stock => {
+                const row = document.createElement('div');
+                row.className = 'table-row';
+                
+                const statusClass = stock.is_active ? 'status-active' : 'status-inactive';
+                const statusText = stock.is_active ? 'Active' : 'Inactive';
+                const toggleText = stock.is_active ? 'Disable' : 'Enable';
+                const sourceText = stock.added_by_user ? 'You' : 'Default';
+                
+                row.innerHTML = `
+                    <div class="symbol">${stock.symbol}</div>
+                    <div>
+                        <div style="font-weight: bold;">${stock.company_name}</div>
+                    </div>
+                    <div>${stock.sector}</div>
+                    <div>${stock.market_cap}</div>
+                    <div class="${statusClass}">${statusText}</div>
+                    <div>${sourceText}</div>
+                    <div>
+                        <button class="btn btn-toggle" onclick="toggleStock('${stock.symbol}', ${!stock.is_active})">${toggleText}</button>
+                        ${stock.added_by_user ? `<button class="btn btn-remove" onclick="removeStock('${stock.symbol}')">Remove</button>` : ''}
+                    </div>
+                `;
+                
+                container.appendChild(row);
+            });
+        }
+        
+        function updateStats(stocks) {
+            const total = stocks.length;
+            const active = stocks.filter(s => s.is_active).length;
+            const userAdded = stocks.filter(s => s.added_by_user).length;
+            
+            document.getElementById('totalStocks').textContent = total;
+            document.getElementById('activeStocks').textContent = active;
+            document.getElementById('userAdded').textContent = userAdded;
+        }
+        
+        function addStock() {
+            const symbol = document.getElementById('newStockSymbol').value.trim().toUpperCase();
+            if (!symbol) {
+                alert('Please enter a stock symbol');
+                return;
+            }
+            
+            const btn = event.target;
+            btn.textContent = '⏳ Adding...';
+            btn.disabled = true;
+            
+            fetch('/api/watchlist/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol: symbol})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('newStockSymbol').value = '';
+                    loadWatchlist();
+                    alert(`✅ ${data.message}`);
+                } else {
+                    alert(`❌ ${data.message}`);
+                }
+            })
+            .catch(error => {
+                alert('Error adding stock: ' + error.message);
+            })
+            .finally(() => {
+                btn.textContent = '➕ Add Stock';
+                btn.disabled = false;
+            });
+        }
+        
+        function toggleStock(symbol, newStatus) {
+            fetch('/api/watchlist/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol: symbol, is_active: newStatus})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadWatchlist();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            });
+        }
+        
+        function removeStock(symbol) {
+            if (confirm(`Remove ${symbol} from watchlist?`)) {
+                fetch('/api/watchlist/remove', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({symbol: symbol})
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadWatchlist();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                });
+            }
+        }
+        
+        // Allow Enter key to add stock
+        document.getElementById('newStockSymbol').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                addStock();
+            }
+        });
+        
+        // Load watchlist on page load
+        document.addEventListener('DOMContentLoaded', loadWatchlist);
+    </script>
+</body>
+</html>
+    ''')
+
+# ===== WATCHLIST API ROUTES =====
+
+@app.route('/api/watchlist')
+def get_watchlist():
+    """Get watchlist details"""
+    try:
+        watchlist = stock_list_manager.get_watchlist_details()
+        return jsonify(watchlist)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route('/api/watchlist/add', methods=['POST'])
+def add_to_watchlist():
+    """Add stock to watchlist"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        
+        if not symbol:
+            return jsonify({"success": False, "message": "Symbol required"})
+        
+        result = stock_list_manager.add_stock_to_watchlist(symbol)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/watchlist/remove', methods=['POST'])
+def remove_from_watchlist():
+    """Remove stock from watchlist"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        
+        if not symbol:
+            return jsonify({"success": False, "message": "Symbol required"})
+        
+        result = stock_list_manager.remove_stock_from_watchlist(symbol)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/watchlist/toggle', methods=['POST'])
+def toggle_watchlist_stock():
+    """Enable/disable stock in analysis"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        is_active = data.get('is_active', True)
+        
+        if not symbol:
+            return jsonify({"success": False, "message": "Symbol required"})
+        
+        result = stock_list_manager.toggle_stock_active(symbol, is_active)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+
+
 @app.route('/portfolio')
 def portfolio_dashboard():
     """Portfolio dashboard page"""
@@ -417,8 +1035,9 @@ def portfolio_dashboard():
         </div>
         
         <div class="nav-links">
-            <a href="/" class="nav-link">🏠 Home</a>
-            <a href="/portfolio" class="nav-link active">📊 Portfolio</a>
+            <a href="/" class="nav-link active">🏠 Home</a>
+            <a href="/portfolio" class="nav-link">📊 Portfolio</a>
+            <a href="/watchlist" class="nav-link">📋 Watchlist</a>
         </div>
         
         <div class="portfolio-summary" id="portfolioSummary">
@@ -676,17 +1295,14 @@ TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}" if TELEGR
 
 class AdvancedStockAnalyzer:
     def __init__(self):
-        # Extended stock list for more comprehensive analysis
-        self.stock_list = [
-            'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NVDA', 'NFLX',
-            'UBER', 'SNAP', 'ZOOM', 'PLTR', 'COIN', 'RBLX', 'SHOP', 'SQ',
-            'PYPL', 'ADBE', 'CRM', 'SPOT', 'AVGO', 'BABA', 'HIMS', 'OKLO', 'NTRB', 'AMD'
-        ]
-        
         # Get market benchmark data (S&P 500)
         self.market_data = None
         self.risk_free_rate = 0.045  # Current 3-month Treasury rate (~4.5%)
         
+    def get_stock_list(self):
+        """Get current active stock list"""
+        return stock_list_manager.get_active_stocks()
+    
     def get_market_data(self):
         """Get S&P 500 data for relative performance analysis"""
         try:
@@ -1018,8 +1634,12 @@ class AdvancedStockAnalyzer:
         return result
     
     def analyze_all_stocks(self):
-        """Analyze all stocks in the watchlist"""
+        """Analyze all stocks in the dynamic watchlist"""
         print("🚀 Starting Advanced Stock Analysis...")
+        
+        # Get current stock list dynamically
+        current_stock_list = self.get_stock_list()
+        print(f"📊 Analyzing {len(current_stock_list)} stocks from watchlist")
         
         # Load market data first
         self.get_market_data()
@@ -1027,8 +1647,8 @@ class AdvancedStockAnalyzer:
         results = []
         failed_stocks = []
         
-        for i, symbol in enumerate(self.stock_list, 1):
-            print(f"\n📊 Progress: {i}/{len(self.stock_list)} - {symbol}")
+        for i, symbol in enumerate(current_stock_list, 1):
+            print(f"\n📊 Progress: {i}/{len(current_stock_list)} - {symbol}")
             
             result = self.analyze_stock(symbol)
             if result:
@@ -1406,9 +2026,10 @@ def dashboard():
             <p>Probability ranges • Risk-adjusted returns • Relative performance</p>
         </div>
 
-        <div class="nav-links" style="text-align: center; margin-bottom: 30px;">
+        <div class="nav-links">
             <a href="/" class="nav-link active">🏠 Home</a>
-            <a href="/portfolio" class="nav-link">📊 My Portfolio</a>
+            <a href="/portfolio" class="nav-link">📊 Portfolio</a>
+            <a href="/watchlist" class="nav-link">📋 Watchlist</a>
         </div>
         
         <div class="info-card">
