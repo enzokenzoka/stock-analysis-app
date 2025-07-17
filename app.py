@@ -25,7 +25,7 @@ class AdvancedStockAnalyzer:
         self.stock_list = [
             'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NVDA', 'NFLX',
             'UBER', 'SNAP', 'ZOOM', 'PLTR', 'COIN', 'RBLX', 'SHOP', 'SQ',
-            'PYPL', 'ADBE', 'CRM', 'SPOT'
+            'PYPL', 'ADBE', 'CRM', 'SPOT', 'AVGO', 'BABA', 'HIMS', 'OKLO', 'NTRB', 'AMD'
         ]
         
         # Get market benchmark data (S&P 500)
