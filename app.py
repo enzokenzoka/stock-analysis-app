@@ -11,9 +11,664 @@ import threading
 import webbrowser
 from sklearn.preprocessing import StandardScaler
 import warnings
+import sqlite3
+from datetime import datetime, timedelta
+import uuid
+import json
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
+
+
+# ===== NEW: PORTFOLIO DATABASE FUNCTIONS =====
+
+def init_portfolio_database():
+    """Initialize portfolio and tracking databases"""
+    conn = sqlite3.connect('portfolio.db')
+    cursor = conn.cursor()
+    
+    # User portfolios table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_portfolios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT DEFAULT 'default_user',
+            symbol TEXT,
+            added_date TEXT,
+            added_price REAL,
+            current_price REAL,
+            signal_when_added TEXT,
+            confidence_when_added REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, symbol)
+        )
+    ''')
+    
+    # Prediction tracking table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS prediction_tracking (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            prediction_date TEXT,
+            signal TEXT,
+            confidence REAL,
+            price_when_predicted REAL,
+            target_price_1week REAL,
+            target_price_1month REAL,
+            target_price_3month REAL,
+            actual_price_1week REAL,
+            actual_price_1month REAL,
+            actual_price_3month REAL,
+            accuracy_1week REAL,
+            accuracy_1month REAL,
+            accuracy_3month REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+class PortfolioManager:
+    def __init__(self):
+        self.db_name = 'portfolio.db'
+        init_portfolio_database()
+    
+    def add_to_portfolio(self, symbol, current_price, signal, confidence):
+        """Add stock to user portfolio"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # Check if already exists
+            cursor.execute('''
+                SELECT id FROM user_portfolios 
+                WHERE user_id = ? AND symbol = ?
+            ''', ('default_user', symbol))
+            
+            if cursor.fetchone():
+                conn.close()
+                return {"success": False, "message": f"{symbol} already in portfolio"}
+            
+            # Add to portfolio
+            cursor.execute('''
+                INSERT INTO user_portfolios 
+                (user_id, symbol, added_date, added_price, current_price, signal_when_added, confidence_when_added)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', ('default_user', symbol, datetime.now().strftime('%Y-%m-%d'), 
+                  current_price, current_price, signal, confidence))
+            
+            conn.commit()
+            conn.close()
+            return {"success": True, "message": f"{symbol} added to portfolio"}
+            
+        except Exception as e:
+            return {"success": False, "message": f"Error: {str(e)}"}
+    
+    def remove_from_portfolio(self, symbol):
+        """Remove stock from portfolio"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                DELETE FROM user_portfolios 
+                WHERE user_id = ? AND symbol = ?
+            ''', ('default_user', symbol))
+            
+            conn.commit()
+            conn.close()
+            return {"success": True, "message": f"{symbol} removed from portfolio"}
+            
+        except Exception as e:
+            return {"success": False, "message": f"Error: {str(e)}"}
+    
+    def get_portfolio(self):
+        """Get user's portfolio with current analysis"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT symbol, added_date, added_price, current_price, 
+                       signal_when_added, confidence_when_added, created_at
+                FROM user_portfolios 
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', ('default_user',))
+            
+            portfolio_data = cursor.fetchall()
+            conn.close()
+            
+            # Convert to list of dictionaries
+            portfolio = []
+            for row in portfolio_data:
+                portfolio.append({
+                    'symbol': row[0],
+                    'added_date': row[1],
+                    'added_price': row[2],
+                    'current_price': row[3],
+                    'signal_when_added': row[4],
+                    'confidence_when_added': row[5],
+                    'created_at': row[6]
+                })
+            
+            return portfolio
+            
+        except Exception as e:
+            print(f"Error getting portfolio: {e}")
+            return []
+    
+    def update_portfolio_prices(self, analyzer):
+        """Update current prices for portfolio stocks"""
+        try:
+            portfolio = self.get_portfolio()
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            for stock in portfolio:
+                # Get current analysis
+                current_analysis = analyzer.analyze_stock(stock['symbol'])
+                if current_analysis:
+                    cursor.execute('''
+                        UPDATE user_portfolios 
+                        SET current_price = ?
+                        WHERE user_id = ? AND symbol = ?
+                    ''', (current_analysis['current_price'], 'default_user', stock['symbol']))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"Error updating portfolio prices: {e}")
+            return False
+    
+    def save_prediction(self, symbol, analysis):
+        """Save prediction for tracking accuracy"""
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            
+            # Extract prediction data
+            prob_ranges = analysis.get('probability_ranges', {})
+            
+            cursor.execute('''
+                INSERT INTO prediction_tracking 
+                (symbol, prediction_date, signal, confidence, price_when_predicted, 
+                 target_price_1week, target_price_1month, target_price_3month)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                symbol,
+                datetime.now().strftime('%Y-%m-%d'),
+                analysis['signal'],
+                analysis['confidence'],
+                analysis['current_price'],
+                prob_ranges.get('1_week', {}).get('expected_price', 0),
+                prob_ranges.get('1_month', {}).get('expected_price', 0),
+                prob_ranges.get('3_months', {}).get('expected_price', 0)
+            ))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"Error saving prediction: {e}")
+            return False
+    
+    def get_portfolio_performance(self):
+        """Calculate portfolio performance metrics"""
+        try:
+            portfolio = self.get_portfolio()
+            if not portfolio:
+                return {"total_value": 0, "total_gain": 0, "total_gain_percent": 0, "stocks": []}
+            
+            total_invested = 0
+            total_current = 0
+            performance_data = []
+            
+            for stock in portfolio:
+                added_price = stock['added_price']
+                current_price = stock['current_price']
+                gain = current_price - added_price
+                gain_percent = (gain / added_price) * 100 if added_price > 0 else 0
+                
+                total_invested += added_price
+                total_current += current_price
+                
+                performance_data.append({
+                    'symbol': stock['symbol'],
+                    'added_price': added_price,
+                    'current_price': current_price,
+                    'gain': gain,
+                    'gain_percent': gain_percent,
+                    'signal_when_added': stock['signal_when_added'],
+                    'confidence_when_added': stock['confidence_when_added'],
+                    'added_date': stock['added_date']
+                })
+            
+            total_gain = total_current - total_invested
+            total_gain_percent = (total_gain / total_invested) * 100 if total_invested > 0 else 0
+            
+            return {
+                "total_invested": total_invested,
+                "total_current": total_current,
+                "total_gain": total_gain,
+                "total_gain_percent": total_gain_percent,
+                "stocks": performance_data
+            }
+            
+        except Exception as e:
+            print(f"Error calculating portfolio performance: {e}")
+            return {"total_value": 0, "total_gain": 0, "total_gain_percent": 0, "stocks": []}
+
+# ===== NEW: PORTFOLIO ROUTES =====
+
+# Create portfolio manager instance
+portfolio_manager = PortfolioManager()
+
+@app.route('/portfolio')
+def portfolio_dashboard():
+    """Portfolio dashboard page"""
+    return render_template_string('''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>📊 My Portfolio - Stock Analysis</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .nav-links { text-align: center; margin-bottom: 30px; }
+        .nav-link { 
+            color: white; 
+            text-decoration: none; 
+            margin: 0 15px; 
+            padding: 10px 20px; 
+            border: 2px solid white; 
+            border-radius: 25px; 
+            transition: all 0.3s;
+        }
+        .nav-link:hover { background: white; color: #667eea; }
+        .nav-link.active { background: white; color: #667eea; }
+        
+        .portfolio-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .summary-card {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .summary-value { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+        .summary-label { color: #666; }
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+        
+        .portfolio-actions {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .action-btn {
+            background: linear-gradient(45deg, #27ae60, #2ecc71);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: all 0.3s;
+        }
+        .action-btn:hover { transform: translateY(-2px); }
+        .action-btn.danger { background: linear-gradient(45deg, #dc3545, #c82333); }
+        
+        .portfolio-stocks {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .stocks-header {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 15px;
+            display: grid;
+            grid-template-columns: 100px 1fr 100px 100px 100px 100px 100px;
+            gap: 15px;
+            font-weight: bold;
+        }
+        .stock-row {
+            padding: 15px;
+            display: grid;
+            grid-template-columns: 100px 1fr 100px 100px 100px 100px 100px;
+            gap: 15px;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+        }
+        .stock-row:last-child { border-bottom: none; }
+        .stock-row:hover { background: #f8f9fa; }
+        
+        .symbol { font-weight: bold; color: #2c3e50; }
+        .signal { 
+            padding: 4px 8px; 
+            border-radius: 12px; 
+            font-size: 12px; 
+            color: white; 
+            text-align: center; 
+        }
+        .strong-buy { background: #27ae60; }
+        .buy { background: #28a745; }
+        .hold { background: #ffc107; }
+        .sell { background: #dc3545; }
+        .strong-sell { background: #c82333; }
+        
+        .remove-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .remove-btn:hover { background: #c82333; }
+        
+        .empty-portfolio {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .loading { text-align: center; padding: 20px; }
+        .spinner { 
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 My Portfolio</h1>
+            <p>Track your favorite stocks and AI prediction performance</p>
+        </div>
+        
+        <div class="nav-links">
+            <a href="/" class="nav-link">🏠 Home</a>
+            <a href="/portfolio" class="nav-link active">📊 Portfolio</a>
+        </div>
+        
+        <div class="portfolio-summary" id="portfolioSummary">
+            <div class="summary-card">
+                <div class="summary-value" id="totalStocks">0</div>
+                <div class="summary-label">Stocks Tracked</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalInvested">$0</div>
+                <div class="summary-label">Total "Invested"</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalCurrent">$0</div>
+                <div class="summary-label">Current Value</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalGain">$0</div>
+                <div class="summary-label">Total Gain/Loss</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalGainPercent">0%</div>
+                <div class="summary-label">Total Return</div>
+            </div>
+        </div>
+        
+        <div class="portfolio-actions">
+            <button class="action-btn" onclick="updatePrices()">📈 Update Prices</button>
+            <button class="action-btn danger" onclick="clearPortfolio()">🗑️ Clear Portfolio</button>
+        </div>
+        
+        <div class="portfolio-stocks">
+            <div class="stocks-header">
+                <div>Symbol</div>
+                <div>Added Date</div>
+                <div>Added Price</div>
+                <div>Current Price</div>
+                <div>Gain/Loss</div>
+                <div>Signal When Added</div>
+                <div>Action</div>
+            </div>
+            <div id="portfolioStocks">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading portfolio...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function loadPortfolio() {
+            fetch('/api/portfolio')
+                .then(response => response.json())
+                .then(data => {
+                    updateSummary(data);
+                    displayPortfolioStocks(data.stocks);
+                })
+                .catch(error => {
+                    console.error('Error loading portfolio:', error);
+                    document.getElementById('portfolioStocks').innerHTML = 
+                        '<div class="empty-portfolio">Error loading portfolio</div>';
+                });
+        }
+        
+        function updateSummary(data) {
+            document.getElementById('totalStocks').textContent = data.stocks.length;
+            document.getElementById('totalInvested').textContent = '$' + data.total_invested.toFixed(2);
+            document.getElementById('totalCurrent').textContent = '$' + data.total_current.toFixed(2);
+            
+            const gainElement = document.getElementById('totalGain');
+            const gainPercentElement = document.getElementById('totalGainPercent');
+            
+            gainElement.textContent = (data.total_gain >= 0 ? '+' : '') + '$' + data.total_gain.toFixed(2);
+            gainPercentElement.textContent = (data.total_gain_percent >= 0 ? '+' : '') + data.total_gain_percent.toFixed(1) + '%';
+            
+            gainElement.className = 'summary-value ' + (data.total_gain >= 0 ? 'positive' : 'negative');
+            gainPercentElement.className = 'summary-value ' + (data.total_gain_percent >= 0 ? 'positive' : 'negative');
+        }
+        
+        function displayPortfolioStocks(stocks) {
+            const container = document.getElementById('portfolioStocks');
+            
+            if (stocks.length === 0) {
+                container.innerHTML = '<div class="empty-portfolio">No stocks in portfolio yet.<br>Go to the <a href="/">main page</a> to add stocks!</div>';
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            stocks.forEach(stock => {
+                const gain = stock.current_price - stock.added_price;
+                const gainPercent = (gain / stock.added_price) * 100;
+                const gainClass = gain >= 0 ? 'positive' : 'negative';
+                const signalClass = stock.signal_when_added.toLowerCase().replace(' ', '-');
+                
+                const row = document.createElement('div');
+                row.className = 'stock-row';
+                row.innerHTML = `
+                    <div class="symbol">${stock.symbol}</div>
+                    <div>${stock.added_date}</div>
+                    <div>$${stock.added_price.toFixed(2)}</div>
+                    <div>$${stock.current_price.toFixed(2)}</div>
+                    <div class="${gainClass}">${gain >= 0 ? '+' : ''}$${gain.toFixed(2)} (${gainPercent.toFixed(1)}%)</div>
+                    <div class="signal ${signalClass}">${stock.signal_when_added}</div>
+                    <div><button class="remove-btn" onclick="removeFromPortfolio('${stock.symbol}')">Remove</button></div>
+                `;
+                container.appendChild(row);
+            });
+        }
+        
+        function removeFromPortfolio(symbol) {
+            if (confirm(`Remove ${symbol} from portfolio?`)) {
+                fetch('/api/portfolio/remove', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({symbol: symbol})
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadPortfolio();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                });
+            }
+        }
+        
+        function updatePrices() {
+            document.getElementById('portfolioStocks').innerHTML = '<div class="loading"><div class="spinner"></div><p>Updating prices...</p></div>';
+            
+            fetch('/api/portfolio/update')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadPortfolio();
+                    } else {
+                        alert('Error updating prices: ' + data.message);
+                    }
+                });
+        }
+        
+        function clearPortfolio() {
+            if (confirm('Are you sure you want to clear your entire portfolio?')) {
+                fetch('/api/portfolio/clear', {method: 'POST'})
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            loadPortfolio();
+                        } else {
+                            alert('Error: ' + data.message);
+                        }
+                    });
+            }
+        }
+        
+        // Load portfolio on page load
+        document.addEventListener('DOMContentLoaded', loadPortfolio);
+    </script>
+</body>
+</html>
+    ''')
+
+# ===== NEW: PORTFOLIO API ROUTES =====
+
+@app.route('/api/portfolio')
+def get_portfolio():
+    """Get portfolio performance data"""
+    try:
+        # Update prices first
+        portfolio_manager.update_portfolio_prices(analyzer)
+        
+        # Get performance data
+        performance = portfolio_manager.get_portfolio_performance()
+        return jsonify(performance)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route('/api/portfolio/add', methods=['POST'])
+def add_to_portfolio():
+    """Add stock to portfolio"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol')
+        
+        if not symbol:
+            return jsonify({"success": False, "message": "Symbol required"})
+        
+        # Get current analysis
+        analysis = analyzer.analyze_stock(symbol)
+        if not analysis:
+            return jsonify({"success": False, "message": "Could not analyze stock"})
+        
+        # Add to portfolio
+        result = portfolio_manager.add_to_portfolio(
+            symbol,
+            analysis['current_price'],
+            analysis['signal'],
+            analysis['confidence']
+        )
+        
+        # Save prediction for tracking
+        portfolio_manager.save_prediction(symbol, analysis)
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/portfolio/remove', methods=['POST'])
+def remove_from_portfolio():
+    """Remove stock from portfolio"""
+    try:
+        data = request.get_json()
+        symbol = data.get('symbol')
+        
+        if not symbol:
+            return jsonify({"success": False, "message": "Symbol required"})
+        
+        result = portfolio_manager.remove_from_portfolio(symbol)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/portfolio/update')
+def update_portfolio_prices():
+    """Update portfolio prices"""
+    try:
+        success = portfolio_manager.update_portfolio_prices(analyzer)
+        if success:
+            return jsonify({"success": True, "message": "Prices updated successfully"})
+        else:
+            return jsonify({"success": False, "message": "Error updating prices"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route('/api/portfolio/clear', methods=['POST'])
+def clear_portfolio():
+    """Clear entire portfolio"""
+    try:
+        conn = sqlite3.connect('portfolio.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM user_portfolios WHERE user_id = ?', ('default_user',))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": "Portfolio cleared"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+# ===== MODIFY EXISTING STOCK DISPLAY TO ADD "ADD TO PORTFOLIO" BUTTONS =====
+
 
 # Telegram Bot Configuration
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -698,6 +1353,50 @@ def dashboard():
         .prediction { background: #e8f5e8; padding: 10px; border-radius: 8px; border-left: 4px solid #28a745; }
         .prediction-title { font-weight: bold; margin-bottom: 5px; }
         .prediction-item { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 2px; }
+
+        .portfolio-btn { background: linear-gradient(45deg, #3498db, #2980b9); color: white; border: none;
+            padding: 8px 16px;
+            border-radius: 15px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+        .portfolio-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+        .portfolio-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .risk-positive { color: #28a745; }
+        .risk-negative { color: #dc3545; }
+        .risk-neutral { color: #6c757d; }
+
+        .nav-links { text-align: center; margin-bottom: 30px; }
+        .nav-link { 
+            color: white; 
+            text-decoration: none; 
+            margin: 0 15px; 
+            padding: 10px 20px; 
+            border: 2px solid white; 
+            border-radius: 25px; 
+            transition: all 0.3s;
+            display: inline-block;
+        }
+        .nav-link:hover { 
+            background: white; 
+            color: #667eea; 
+            transform: translateY(-2px);
+        }
+        .nav-link.active { 
+        background: white; 
+        color: #667eea; 
+        }
+        
     </style>
 </head>
 <body>
@@ -705,6 +1404,11 @@ def dashboard():
         <div class="header">
             <h1>📊 Advanced Stock Analysis</h1>
             <p>Probability ranges • Risk-adjusted returns • Relative performance</p>
+        </div>
+
+        <div class="nav-links" style="text-align: center; margin-bottom: 30px;">
+            <a href="/" class="nav-link active">🏠 Home</a>
+            <a href="/portfolio" class="nav-link">📊 My Portfolio</a>
         </div>
         
         <div class="info-card">
@@ -802,90 +1506,131 @@ def dashboard():
         }
         
         function displayStocks(stocks) {
-            const gridDiv = document.getElementById('stocksGrid');
-            gridDiv.innerHTML = '';
-            
-
-stocks.forEach(stock => {
-    const signalClass = stock.signal.toLowerCase().replace(' ', '-');
+    const gridDiv = document.getElementById('stocksGrid');
+    gridDiv.innerHTML = '';
     
-    const card = document.createElement('div');
-    card.className = 'stock-card';
-    
-    // Create predictions HTML for all timeframes
-    let predictionsHTML = '';
-    if (stock.probability_ranges) {
-        const timeframes = {
-            '1_week': '📅 1 Week',
-            '1_month': '📅 1 Month', 
-            '3_months': '📅 3 Months'
-        };
+    stocks.forEach(stock => {
+        const signalClass = stock.signal.toLowerCase().replace(' ', '-');
         
-        for (const [period, title] of Object.entries(timeframes)) {
-            const data = stock.probability_ranges[period];
-            if (data) {
-                const expectedChange = ((data.expected_price - stock.current_price) / stock.current_price * 100);
-                const changeClass = expectedChange > 0 ? 'risk-positive' : expectedChange < 0 ? 'risk-negative' : 'risk-neutral';
-                
-                predictionsHTML += `
-                    <div class="prediction" style="margin-bottom: 10px;">
-                        <div class="prediction-title">${title}</div>
-                        <div class="prediction-item">
-                            <span>Expected:</span>
-                            <span class="${changeClass}">$${data.expected_price.toFixed(2)} (${expectedChange > 0 ? '+' : ''}${expectedChange.toFixed(1)}%)</span>
+        const card = document.createElement('div');
+        card.className = 'stock-card';
+        
+        // Create predictions HTML for all timeframes
+        let predictionsHTML = '';
+        if (stock.probability_ranges) {
+            const timeframes = {
+                '1_week': '📅 1 Week',
+                '1_month': '📅 1 Month', 
+                '3_months': '📅 3 Months'
+            };
+            
+            for (const [period, title] of Object.entries(timeframes)) {
+                const data = stock.probability_ranges[period];
+                if (data) {
+                    const expectedChange = ((data.expected_price - stock.current_price) / stock.current_price * 100);
+                    const changeClass = expectedChange > 0 ? 'risk-positive' : expectedChange < 0 ? 'risk-negative' : 'risk-neutral';
+                    
+                    predictionsHTML += `
+                        <div class="prediction" style="margin-bottom: 10px;">
+                            <div class="prediction-title">${title}</div>
+                            <div class="prediction-item">
+                                <span>Expected:</span>
+                                <span class="${changeClass}">$${data.expected_price.toFixed(2)} (${expectedChange > 0 ? '+' : ''}${expectedChange.toFixed(1)}%)</span>
+                            </div>
+                            <div class="prediction-item">
+                                <span>68% Range:</span>
+                                <span>$${data.prob_68_range[0].toFixed(2)} - $${data.prob_68_range[1].toFixed(2)}</span>
+                            </div>
+                            <div class="prediction-item">
+                                <span>95% Range:</span>
+                                <span>$${data.prob_95_range[0].toFixed(2)} - $${data.prob_95_range[1].toFixed(2)}</span>
+                            </div>
                         </div>
-                        <div class="prediction-item">
-                            <span>68% Range:</span>
-                            <span>$${data.prob_68_range[0].toFixed(2)} - $${data.prob_68_range[1].toFixed(2)}</span>
-                        </div>
-                        <div class="prediction-item">
-                            <span>95% Range:</span>
-                            <span>$${data.prob_95_range[0].toFixed(2)} - $${data.prob_95_range[1].toFixed(2)}</span>
-                        </div>
-                    </div>
-                `;
+                    `;
+                }
             }
         }
-    }
-    
-    card.innerHTML = `
-        <div class="stock-header">
-            <div class="symbol">${stock.symbol}</div>
-            <div class="signal ${signalClass}">${stock.signal}</div>
-        </div>
         
-        <div class="price-info">
-            <div class="price-item">
-                <div class="price-label">Current Price</div>
-                <div class="price-value">$${stock.current_price}</div>
+        card.innerHTML = `
+            <div class="stock-header">
+                <div class="symbol">${stock.symbol}</div>
+                <div class="signal ${signalClass}">${stock.signal}</div>
             </div>
-            <div class="price-item">
-                <div class="price-label">Confidence</div>
-                <div class="price-value">${stock.confidence}%</div>
+            
+            <div class="price-info">
+                <div class="price-item">
+                    <div class="price-label">Current Price</div>
+                    <div class="price-value">$${stock.current_price}</div>
+                </div>
+                <div class="price-item">
+                    <div class="price-label">Confidence</div>
+                    <div class="price-value">${stock.confidence}%</div>
+                </div>
             </div>
-        </div>
+            
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-label">RSI</div>
+                    <div class="metric-value">${stock.rsi}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Volatility</div>
+                    <div class="metric-value">${stock.volatility}%</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Volume</div>
+                    <div class="metric-value">${(stock.volume / 1000000).toFixed(1)}M</div>
+                </div>
+            </div>
+            
+            ${predictionsHTML}
+            
+            <div style="margin-top: 15px; text-align: center;">
+                <button class="portfolio-btn" onclick="addToPortfolio('${stock.symbol}')">
+                    📊 Add to Portfolio
+                </button>
+            </div>
+        `;
         
-        <div class="metrics">
-            <div class="metric">
-                <div class="metric-label">RSI</div>
-                <div class="metric-value">${stock.rsi}</div>
-            </div>
-            <div class="metric">
-                <div class="metric-label">Volatility</div>
-                <div class="metric-value">${stock.volatility}%</div>
-            </div>
-            <div class="metric">
-                <div class="metric-label">Volume</div>
-                <div class="metric-value">${(stock.volume / 1000000).toFixed(1)}M</div>
-            </div>
-        </div>
-        
-        ${predictionsHTML}
-    `;
-    
-    gridDiv.appendChild(card);
-});
+        gridDiv.appendChild(card);
+    });
         }
+
+    function addToPortfolio(symbol) {
+    const button = event.target;
+    const originalText = button.textContent;
+    button.textContent = '⏳ Adding...';
+    button.disabled = true;
+    
+    fetch('/api/portfolio/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol: symbol})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            button.textContent = '✅ Added!';
+            button.style.background = '#28a745';
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.style.background = '';
+                button.disabled = false;
+            }, 2000);
+        } else {
+            alert(data.message);
+            button.textContent = originalText;
+            button.disabled = false;
+        }
+    })
+    .catch(error => {
+        alert('Error adding to portfolio: ' + error.message);
+        button.textContent = originalText;
+        button.disabled = false;
+    });
+}
+
+        
     </script>
 </body>
 </html>
