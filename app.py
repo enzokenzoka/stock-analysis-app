@@ -1375,14 +1375,50 @@ class AdvancedStockAnalyzer:
             return None
     
     def calculate_probability_ranges(self, df):
-        """Calculate probability ranges for different time horizons"""
+        """Calculate probability ranges for different time horizons with NaN handling"""
         try:
             current_price = df['close'].iloc[-1]
+            if pd.isna(current_price):
+                return None
+                
             returns = df['returns'].dropna()
+            
+            # Need minimum data for reliable calculations
+            if len(returns) < 30:
+                print("⚠️ Limited data for probability calculations")
+                # Return conservative estimates
+                return {
+                    '1_week': {
+                        'expected_price': current_price,
+                        'prob_68_range': [current_price * 0.98, current_price * 1.02],
+                        'prob_95_range': [current_price * 0.95, current_price * 1.05],
+                        'expected_return': 0.0,
+                        'volatility': 5.0
+                    },
+                    '1_month': {
+                        'expected_price': current_price,
+                        'prob_68_range': [current_price * 0.95, current_price * 1.05],
+                        'prob_95_range': [current_price * 0.90, current_price * 1.10],
+                        'expected_return': 0.0,
+                        'volatility': 10.0
+                    },
+                    '3_months': {
+                        'expected_price': current_price,
+                        'prob_68_range': [current_price * 0.90, current_price * 1.10],
+                        'prob_95_range': [current_price * 0.80, current_price * 1.20],
+                        'expected_return': 0.0,
+                        'volatility': 15.0
+                    }
+                }
             
             # Calculate statistics
             mean_return = returns.mean()
             std_return = returns.std()
+            
+            # Handle NaN in statistics
+            if pd.isna(mean_return) or pd.isna(std_return):
+                mean_return = 0.0
+                std_return = 0.02  # 2% default daily volatility
             
             # Time horizons (in trading days)
             horizons = {
@@ -1399,6 +1435,8 @@ class AdvancedStockAnalyzer:
                 horizon_std = std_return * np.sqrt(days)
                 
                 # Calculate probability ranges (normal distribution assumption)
+                expected_price = current_price * (1 + horizon_mean)
+                
                 # 68% confidence interval (1 standard deviation)
                 prob_68_low = current_price * (1 + horizon_mean - horizon_std)
                 prob_68_high = current_price * (1 + horizon_mean + horizon_std)
@@ -1407,8 +1445,12 @@ class AdvancedStockAnalyzer:
                 prob_95_low = current_price * (1 + horizon_mean - 2*horizon_std)
                 prob_95_high = current_price * (1 + horizon_mean + 2*horizon_std)
                 
+                # Ensure positive prices
+                prob_68_low = max(prob_68_low, current_price * 0.5)
+                prob_95_low = max(prob_95_low, current_price * 0.3)
+                
                 probability_ranges[period] = {
-                    'expected_price': current_price * (1 + horizon_mean),
+                    'expected_price': expected_price,
                     'prob_68_range': [prob_68_low, prob_68_high],
                     'prob_95_range': [prob_95_low, prob_95_high],
                     'expected_return': horizon_mean * 100,
@@ -1420,15 +1462,38 @@ class AdvancedStockAnalyzer:
         except Exception as e:
             print(f"Error calculating probability ranges: {e}")
             return None
+
     
     def calculate_risk_metrics(self, df):
-        """Calculate risk-adjusted return metrics"""
+        """Calculate risk-adjusted return metrics with NaN handling"""
         try:
             returns = df['returns'].dropna()
+            
+            if len(returns) < 30:
+                print("⚠️ Limited data for risk metrics")
+                return {
+                    'annual_return': 0.0,
+                    'annual_volatility': 15.0,
+                    'sharpe_ratio': 0.0,
+                    'sortino_ratio': 0.0,
+                    'max_drawdown': -5.0,
+                    'calmar_ratio': 0.0
+                }
             
             # Annualized metrics
             annual_return = returns.mean() * 252
             annual_volatility = returns.std() * np.sqrt(252)
+            
+            # Handle NaN in calculations
+            if pd.isna(annual_return) or pd.isna(annual_volatility):
+                return {
+                    'annual_return': 0.0,
+                    'annual_volatility': 15.0,
+                    'sharpe_ratio': 0.0,
+                    'sortino_ratio': 0.0,
+                    'max_drawdown': -5.0,
+                    'calmar_ratio': 0.0
+                }
             
             # Sharpe Ratio
             excess_return = annual_return - self.risk_free_rate
@@ -1436,7 +1501,7 @@ class AdvancedStockAnalyzer:
             
             # Sortino Ratio (downside deviation)
             negative_returns = returns[returns < 0]
-            downside_deviation = negative_returns.std() * np.sqrt(252) if len(negative_returns) > 0 else 0
+            downside_deviation = negative_returns.std() * np.sqrt(252) if len(negative_returns) > 0 else annual_volatility
             sortino_ratio = excess_return / downside_deviation if downside_deviation > 0 else 0
             
             # Maximum Drawdown
@@ -1444,6 +1509,10 @@ class AdvancedStockAnalyzer:
             rolling_max = cumulative_returns.expanding().max()
             drawdown = (cumulative_returns - rolling_max) / rolling_max
             max_drawdown = drawdown.min()
+            
+            # Handle NaN in drawdown
+            if pd.isna(max_drawdown):
+                max_drawdown = -0.05  # Default -5%
             
             # Calmar Ratio
             calmar_ratio = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0
@@ -1459,7 +1528,15 @@ class AdvancedStockAnalyzer:
             
         except Exception as e:
             print(f"Error calculating risk metrics: {e}")
-            return None
+            return {
+                'annual_return': 0.0,
+                'annual_volatility': 15.0,
+                'sharpe_ratio': 0.0,
+                'sortino_ratio': 0.0,
+                'max_drawdown': -5.0,
+                'calmar_ratio': 0.0
+            }
+        
     
     def calculate_relative_performance(self, df):
         """Calculate performance relative to market benchmark"""
@@ -1510,45 +1587,70 @@ class AdvancedStockAnalyzer:
             return None
     
     def generate_signal(self, df):
-        """Generate trading signal based on multiple factors"""
+        """Generate trading signal based on multiple factors with NaN handling"""
         try:
             latest = df.iloc[-1]
+            
+            # Check for basic data availability
+            if pd.isna(latest['close']) or pd.isna(latest['rsi']):
+                return {
+                    'signal': 'HOLD',
+                    'confidence': 25,
+                    'strength': 0,
+                    'reasons': ['Insufficient data for analysis']
+                }
             
             # Technical signals
             signals = []
             strength = 0
             
             # RSI signal
-            if latest['rsi'] < 30:
-                signals.append("Oversold (RSI < 30)")
-                strength += 3
-            elif latest['rsi'] > 70:
-                signals.append("Overbought (RSI > 70)")
-                strength -= 3
+            rsi = latest['rsi']
+            if not pd.isna(rsi):
+                if rsi < 30:
+                    signals.append("Oversold (RSI < 30)")
+                    strength += 3
+                elif rsi > 70:
+                    signals.append("Overbought (RSI > 70)")
+                    strength -= 3
+                else:
+                    signals.append(f"RSI {rsi:.1f} - Neutral zone")
             
-            # Moving average signals
-            if latest['close'] > latest['ma_20'] > latest['ma_50']:
+            # Moving average signals (handle NaN)
+            close_price = latest['close']
+            ma_20 = latest['ma_20'] if not pd.isna(latest['ma_20']) else close_price
+            ma_50 = latest['ma_50'] if not pd.isna(latest['ma_50']) else close_price
+            
+            if close_price > ma_20 > ma_50:
                 signals.append("Strong uptrend")
                 strength += 2
-            elif latest['close'] < latest['ma_20'] < latest['ma_50']:
+            elif close_price < ma_20 < ma_50:
                 signals.append("Strong downtrend")
                 strength -= 2
-            
-            # MACD signal
-            if latest['macd'] > latest['macd_signal']:
-                signals.append("Positive momentum")
+            elif close_price > ma_20:
+                signals.append("Above 20-day average")
                 strength += 1
             else:
-                signals.append("Negative momentum")
+                signals.append("Below 20-day average")
                 strength -= 1
             
-            # Bollinger Bands
-            if latest['close'] < latest['bb_lower']:
-                signals.append("Below lower Bollinger Band")
-                strength += 1
-            elif latest['close'] > latest['bb_upper']:
-                signals.append("Above upper Bollinger Band")
-                strength -= 1
+            # MACD signal (handle NaN)
+            if not pd.isna(latest['macd']) and not pd.isna(latest['macd_signal']):
+                if latest['macd'] > latest['macd_signal']:
+                    signals.append("Positive momentum")
+                    strength += 1
+                else:
+                    signals.append("Negative momentum")
+                    strength -= 1
+            
+            # Bollinger Bands (handle NaN)
+            if not pd.isna(latest['bb_lower']) and not pd.isna(latest['bb_upper']):
+                if close_price < latest['bb_lower']:
+                    signals.append("Below lower Bollinger Band")
+                    strength += 1
+                elif close_price > latest['bb_upper']:
+                    signals.append("Above upper Bollinger Band")
+                    strength -= 1
             
             # Determine overall signal
             if strength >= 3:
@@ -1576,18 +1678,23 @@ class AdvancedStockAnalyzer:
             
         except Exception as e:
             print(f"Error generating signal: {e}")
-            return None
+            return {
+                'signal': 'HOLD',
+                'confidence': 25,
+                'strength': 0,
+                'reasons': ['Error in signal calculation']
+            }
+
     
     def analyze_stock(self, symbol):
-        """Complete analysis of a single stock"""
+        """Complete analysis of a single stock with NaN handling"""
         print(f"📊 Analyzing {symbol}...")
         
         # Get data
         df = self.get_stock_data(symbol)
         if df is None:
             return None
-        
-        # Calculate indicators
+            
         df = self.calculate_technical_indicators(df)
         if df is None:
             return None
@@ -1595,43 +1702,88 @@ class AdvancedStockAnalyzer:
         # Get latest values
         latest = df.iloc[-1]
         
-        # Calculate all metrics
-        probability_ranges = self.calculate_probability_ranges(df)
-        risk_metrics = self.calculate_risk_metrics(df)
-        relative_performance = self.calculate_relative_performance(df)
-        signal_data = self.generate_signal(df)
+        # Helper function to safely convert values and handle NaN
+        def safe_float(value, default=0.0):
+            """Convert value to float, handling NaN and None"""
+            try:
+                if pd.isna(value) or value is None:
+                    return default
+                return float(value)
+            except (ValueError, TypeError):
+                return default
         
-        # Compile results
+        def safe_round(value, decimals=2, default=0.0):
+            """Safely round a value, handling NaN"""
+            safe_val = safe_float(value, default)
+            return round(safe_val, decimals)
+        
+        # Validate that we have minimum required data
+        if pd.isna(latest['close']) or pd.isna(latest['rsi']):
+            print(f"❌ Insufficient data for {symbol}")
+            return None
+        
+        # Calculate all metrics with NaN handling
+        try:
+            probability_ranges = self.calculate_probability_ranges(df)
+            risk_metrics = self.calculate_risk_metrics(df)
+            relative_performance = self.calculate_relative_performance(df)
+            signal_data = self.generate_signal(df)
+        except Exception as e:
+            print(f"❌ Error in calculations for {symbol}: {e}")
+            return None
+        
+        # Safely extract values with NaN handling
+        current_price = safe_float(latest['close'])
+        rsi_value = safe_float(latest['rsi'])
+        volume_value = safe_float(latest['volume'])
+        volatility_value = safe_float(latest['volatility']) if 'volatility' in latest else 0.0
+        
+        # Handle moving averages that might be NaN for new stocks
+        ma_20 = safe_float(latest['ma_20'], current_price)  # Default to current price if NaN
+        ma_50 = safe_float(latest['ma_50'], current_price)
+        ma_200 = safe_float(latest['ma_200'], current_price)
+        macd_value = safe_float(latest['macd'])
+        
+        # Calculate Bollinger Band position safely
+        bb_upper = safe_float(latest['bb_upper'], current_price * 1.02)
+        bb_lower = safe_float(latest['bb_lower'], current_price * 0.98)
+        bb_position = 50.0  # Default to middle
+        if bb_upper != bb_lower:
+            bb_position = ((current_price - bb_lower) / (bb_upper - bb_lower)) * 100
+            bb_position = max(0, min(100, bb_position))  # Clamp between 0-100
+        
+        # Compile results with safe values
         result = {
             'symbol': symbol,
-            'current_price': round(float(latest['close']), 2),
+            'current_price': safe_round(current_price, 2),
             'signal': signal_data['signal'] if signal_data else 'HOLD',
-            'confidence': signal_data['confidence'] if signal_data else 50,
-            'rsi': round(float(latest['rsi']), 1),
-            'volume': int(latest['volume']),
-            'volatility': round(float(latest['volatility']), 1),
+            'confidence': safe_round(signal_data['confidence'] if signal_data else 50, 1),
+            'rsi': safe_round(rsi_value, 1),
+            'volume': int(safe_float(volume_value)),
+            'volatility': safe_round(volatility_value, 1),
             
-            # Probability ranges
+            # Probability ranges (already handled in the function)
             'probability_ranges': probability_ranges,
             
-            # Risk metrics
+            # Risk metrics (already handled in the function)
             'risk_metrics': risk_metrics,
             
-            # Relative performance
+            # Relative performance (already handled in the function)
             'relative_performance': relative_performance,
             
-            # Technical details
+            # Technical details with safe values
             'technical_details': {
-                'ma_20': round(float(latest['ma_20']), 2),
-                'ma_50': round(float(latest['ma_50']), 2),
-                'ma_200': round(float(latest['ma_200']), 2),
-                'macd': round(float(latest['macd']), 3),
-                'bb_position': round(((latest['close'] - latest['bb_lower']) / (latest['bb_upper'] - latest['bb_lower'])) * 100, 1),
-                'reasons': signal_data['reasons'] if signal_data else []
+                'ma_20': safe_round(ma_20, 2),
+                'ma_50': safe_round(ma_50, 2),
+                'ma_200': safe_round(ma_200, 2),
+                'macd': safe_round(macd_value, 3),
+                'bb_position': safe_round(bb_position, 1),
+                'reasons': signal_data['reasons'] if signal_data else ['Insufficient data for analysis']
             }
         }
         
         return result
+    
     
     def analyze_all_stocks(self):
         """Analyze all stocks in the dynamic watchlist"""
