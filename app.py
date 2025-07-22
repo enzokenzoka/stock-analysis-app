@@ -11,11 +11,13 @@ import threading
 import webbrowser
 from sklearn.preprocessing import StandardScaler
 import warnings
+from advanced_analytics import AdvancedAnalyzer, NewsAnalyzer, SectorAnalyzer, EarningsAnalyzer
 import sqlite3
 from datetime import datetime, timedelta
 import uuid
 import json
 warnings.filterwarnings('ignore')
+
 
 app = Flask(__name__)
 
@@ -2034,6 +2036,7 @@ Total stocks analyzed: {total}
 
 # Create instances
 analyzer = AdvancedStockAnalyzer()
+advanced_analyzer = AdvancedAnalyzer()
 telegram_bot = TelegramBot(analyzer) if TELEGRAM_BOT_TOKEN else None
 
 # Web routes
@@ -2458,6 +2461,350 @@ def set_telegram_webhook():
 def health_check():
     """Health check endpoint"""
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+
+@app.route('/advanced')
+def advanced_dashboard():
+    """Advanced analytics dashboard"""
+    return render_template_string('''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🚀 Advanced Analytics - Level 2 Features</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header { text-align: center; color: white; margin-bottom: 30px; }
+        .header h1 { font-size: 2.8em; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        
+        .nav-links { text-align: center; margin-bottom: 30px; }
+        .nav-link { 
+            color: white; 
+            text-decoration: none; 
+            margin: 0 15px; 
+            padding: 10px 20px; 
+            border: 2px solid white; 
+            border-radius: 25px; 
+            transition: all 0.3s;
+            display: inline-block;
+        }
+        .nav-link:hover { background: white; color: #667eea; transform: translateY(-2px); }
+        .nav-link.active { background: white; color: #667eea; }
+        
+        .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 25px; margin-bottom: 30px; }
+        .feature-card { 
+            background: rgba(255,255,255,0.95); 
+            padding: 25px; 
+            border-radius: 15px; 
+            text-align: center; 
+            transition: transform 0.3s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .feature-card:hover { transform: translateY(-5px); }
+        .feature-icon { font-size: 3em; margin-bottom: 15px; }
+        .feature-title { font-size: 1.4em; font-weight: bold; margin-bottom: 10px; color: #2c3e50; }
+        .feature-desc { color: #666; margin-bottom: 20px; line-height: 1.5; }
+        .feature-btn { 
+            background: linear-gradient(45deg, #27ae60, #2ecc71);
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 25px; 
+            font-weight: bold;
+            cursor: pointer; 
+            transition: all 0.3s;
+        }
+        .feature-btn:hover { transform: translateY(-2px); }
+        
+        .stock-search { 
+            text-align: center; 
+            margin-bottom: 30px; 
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+        }
+        .search-input { 
+            padding: 12px; 
+            border: 2px solid #ddd; 
+            border-radius: 8px; 
+            font-size: 16px; 
+            margin-right: 10px;
+            width: 200px;
+        }
+        .search-btn { 
+            background: linear-gradient(45deg, #3498db, #2980b9);
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 8px; 
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .analysis-section { 
+            background: rgba(255,255,255,0.95); 
+            padding: 25px; 
+            border-radius: 15px; 
+            margin-bottom: 30px;
+            display: none;
+        }
+        
+        .loading { text-align: center; padding: 40px; }
+        .spinner { 
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .news-article {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #007bff;
+        }
+        .article-title { font-weight: bold; margin-bottom: 8px; }
+        .article-source { font-size: 12px; color: #666; margin-bottom: 5px; }
+        .article-sentiment { 
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            color: white;
+            margin-bottom: 8px;
+        }
+        .sentiment-positive { background: #28a745; }
+        .sentiment-negative { background: #dc3545; }
+        .sentiment-neutral { background: #6c757d; }
+        
+        .sector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
+        .sector-card { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 10px; 
+            border-left: 4px solid #28a745;
+        }
+        .sector-name { font-weight: bold; margin-bottom: 8px; }
+        .sector-perf { font-size: 14px; color: #666; }
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Advanced Analytics</h1>
+            <p>Level 2 Features: News Sentiment • Sector Analysis • Earnings Calendar</p>
+        </div>
+        
+        <div class="nav-links">
+            <a href="/" class="nav-link">🏠 Home</a>
+            <a href="/portfolio" class="nav-link">📊 Portfolio</a>
+            <a href="/watchlist" class="nav-link">📋 Watchlist</a>
+            <a href="/advanced" class="nav-link active">🚀 Advanced</a>
+        </div>
+        
+        <div class="stock-search">
+            <h3>🔍 Advanced Stock Analysis</h3>
+            <input type="text" id="stockSymbol" class="search-input" placeholder="Enter symbol (e.g., AAPL)" maxlength="10">
+            <button class="search-btn" onclick="analyzeStock()">🚀 Analyze</button>
+        </div>
+        
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon">📰</div>
+                <div class="feature-title">News Sentiment</div>
+                <div class="feature-desc">AI-powered analysis of recent news articles to gauge market sentiment for stocks</div>
+                <button class="feature-btn" onclick="showInfo('news')">Learn More</button>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🏭</div>
+                <div class="feature-title">Sector Analysis</div>
+                <div class="feature-desc">Compare sector performance and identify rotation opportunities across 11 major sectors</div>
+                <button class="feature-btn" onclick="showSectorAnalysis()">Analyze Sectors</button>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📊</div>
+                <div class="feature-title">Earnings Calendar</div>
+                <div class="feature-desc">Track upcoming earnings and historical earnings surprises for better timing</div>
+                <button class="feature-btn" onclick="showInfo('earnings')">Learn More</button>
+            </div>
+        </div>
+        
+        <!-- Analysis Sections -->
+        <div class="analysis-section" id="stockAnalysis">
+            <h2 id="analysisTitle">📊 Advanced Analysis</h2>
+            <div id="analysisContent"></div>
+        </div>
+        
+        <div class="analysis-section" id="sectorAnalysis">
+            <h2>🏭 Sector Performance Analysis</h2>
+            <div id="sectorContent"></div>
+        </div>
+    </div>
+    
+    <script>
+        function hideAllSections() {
+            document.querySelectorAll('.analysis-section').forEach(section => {
+                section.style.display = 'none';
+            });
+        }
+        
+        function showSection(sectionId) {
+            hideAllSections();
+            document.getElementById(sectionId).style.display = 'block';
+        }
+        
+        function analyzeStock() {
+            const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+            if (!symbol) {
+                alert('Please enter a stock symbol');
+                return;
+            }
+            
+            showSection('stockAnalysis');
+            document.getElementById('analysisTitle').textContent = `🚀 Advanced Analysis: ${symbol}`;
+            document.getElementById('analysisContent').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Running advanced analysis for ${symbol}...</p>
+                </div>
+            `;
+            
+            fetch(`/api/advanced/${symbol}`)
+                .then(response => response.json())
+                .then(data => displayAdvancedAnalysis(data))
+                .catch(error => {
+                    document.getElementById('analysisContent').innerHTML = 
+                        `<div style="text-align: center; color: #dc3545;">Error: ${error.message}</div>`;
+                });
+        }
+        
+        function displayAdvancedAnalysis(data) {
+            let html = '<div style="text-align: center; padding: 20px;">';
+            
+            if (data.news_sentiment && data.news_sentiment.article_count > 0) {
+                const sentiment = data.news_sentiment;
+                html += `
+                    <div class="news-article">
+                        <div class="article-title">📰 News Sentiment Analysis</div>
+                        <p><strong>Overall Sentiment:</strong> ${sentiment.overall_sentiment}</p>
+                        <p><strong>Confidence:</strong> ${sentiment.confidence}%</p>
+                        <p><strong>Articles Analyzed:</strong> ${sentiment.article_count}</p>
+                    </div>
+                `;
+            } else {
+                html += '<p>📰 No recent news found for this stock</p>';
+            }
+            
+            if (data.upcoming_earnings && data.upcoming_earnings.has_upcoming) {
+                html += `
+                    <div class="news-article">
+                        <div class="article-title">📊 Upcoming Earnings</div>
+                        <p><strong>Next Earnings:</strong> ${data.upcoming_earnings.next_earnings_date}</p>
+                        <p><strong>Days Until:</strong> ${data.upcoming_earnings.days_until_earnings}</p>
+                    </div>
+                `;
+            } else {
+                html += '<p>📊 No upcoming earnings found</p>';
+            }
+            
+            html += '</div>';
+            document.getElementById('analysisContent').innerHTML = html;
+        }
+        
+        function showSectorAnalysis() {
+            showSection('sectorAnalysis');
+            document.getElementById('sectorContent').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing sector performance...</p>
+                </div>
+            `;
+            
+            fetch('/api/sectors')
+                .then(response => response.json())
+                .then(data => displaySectorAnalysis(data))
+                .catch(error => {
+                    document.getElementById('sectorContent').innerHTML = 
+                        `<div style="text-align: center; color: #dc3545;">Error: ${error.message}</div>`;
+                });
+        }
+        
+        function displaySectorAnalysis(data) {
+            let html = '<div class="sector-grid">';
+            
+            Object.entries(data).forEach(([sector, sectorData]) => {
+                const perf3m = sectorData.performance_3m;
+                const perfClass = perf3m > 0 ? 'positive' : 'negative';
+                
+                html += `
+                    <div class="sector-card">
+                        <div class="sector-name">${sector}</div>
+                        <div class="sector-perf">
+                            <div>ETF: ${sectorData.etf}</div>
+                            <div>3M: <span class="${perfClass}">${perf3m > 0 ? '+' : ''}${perf3m}%</span></div>
+                            <div>Volatility: ${sectorData.volatility}%</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            document.getElementById('sectorContent').innerHTML = html;
+        }
+        
+        function showInfo(type) {
+            if (type === 'news') {
+                alert('📰 News Sentiment Analysis:\\n\\nEnter a stock symbol above to see AI-powered analysis of recent news articles. The system analyzes headlines and content to determine if news is positive, negative, or neutral for the stock price.');
+            } else if (type === 'earnings') {
+                alert('📊 Earnings Calendar:\\n\\nEnter a stock symbol above to see upcoming earnings dates and historical earnings surprises. This helps you time your trades around earnings announcements.');
+            }
+        }
+        
+        // Allow Enter key in stock search
+        document.getElementById('stockSymbol').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                analyzeStock();
+            }
+        });
+    </script>
+</body>
+</html>
+    ''')
+
+@app.route('/api/advanced/<symbol>')
+def api_advanced_analysis(symbol):
+    """Get advanced analysis for a specific stock"""
+    try:
+        analysis = advanced_analyzer.get_comprehensive_analysis(symbol.upper())
+        analysis['symbol'] = symbol.upper()
+        return jsonify(analysis)
+    except Exception as e:
+        return jsonify({"error": str(e), "symbol": symbol.upper()})
+
+@app.route('/api/sectors')
+def api_sector_analysis():
+    """Get sector performance analysis"""
+    try:
+        sector_data = advanced_analyzer.sector_analyzer.get_sector_performance()
+        return jsonify(sector_data)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
