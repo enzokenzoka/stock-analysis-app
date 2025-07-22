@@ -167,46 +167,70 @@ class NewsAnalyzer:
             articles = []
             for i, item in enumerate(news[:5]):  # Limit to 5 articles
                 print(f"🔍 Processing article {i+1} for {symbol}")
-                print(f"🔍 Available keys: {list(item.keys())}")
                 
-                # Try multiple possible key names
-                title = (item.get('title') or 
-                        item.get('headline') or 
-                        item.get('title') or 
-                        'No title')
-                
-                description = (item.get('summary') or 
-                              item.get('description') or 
-                              item.get('snippet') or 
-                              title)  # Use title as fallback
-                
-                # Make sure we have some content
-                if len(title) < 3 and len(description) < 3:
-                    print(f"⚠️ Skipping article {i+1} - no content")
-                    continue
+                try:
+                    # NEW: Parse the nested content structure
+                    if 'content' in item:
+                        content_str = str(item['content'])
+                        print(f"🔍 Raw content: {content_str[:200]}...")
+                        
+                        # Try to parse the content as JSON or eval it safely
+                        try:
+                            # First try: direct eval (Yahoo seems to return Python dict format)
+                            import ast
+                            content_data = ast.literal_eval(content_str)
+                            print(f"✅ Parsed content successfully")
+                        except:
+                            try:
+                                # Second try: JSON parsing
+                                import json
+                                content_data = json.loads(content_str)
+                                print(f"✅ Parsed content as JSON")
+                            except:
+                                print(f"❌ Could not parse content for article {i+1}")
+                                continue
+                        
+                        # Extract data from parsed content
+                        title = content_data.get('title', 'No title')
+                        description = content_data.get('summary', content_data.get('description', title))
+                        url = content_data.get('link', content_data.get('url', ''))
+                        source = content_data.get('publisher', content_data.get('source', 'Yahoo Finance'))
+                        
+                        # Handle timestamp
+                        pub_time = content_data.get('providerPublishTime', 0)
+                        if pub_time:
+                            published_date = datetime.fromtimestamp(pub_time).isoformat()
+                        else:
+                            published_date = datetime.now().isoformat()
+                            
+                    else:
+                        # Fallback to old structure (just in case)
+                        title = item.get('title', 'No title')
+                        description = item.get('summary', title)
+                        url = item.get('link', '')
+                        source = item.get('publisher', 'Yahoo Finance')
+                        pub_time = item.get('providerPublishTime', 0)
+                        published_date = datetime.fromtimestamp(pub_time).isoformat() if pub_time else datetime.now().isoformat()
                     
-                # Get other fields
-                url = item.get('link') or item.get('url') or ''
-                
-                # Handle timestamp
-                pub_time = item.get('providerPublishTime', 0)
-                if pub_time:
-                    published_date = datetime.fromtimestamp(pub_time).isoformat()
-                else:
-                    published_date = datetime.now().isoformat()
-                
-                source = item.get('publisher') or item.get('source') or 'Yahoo Finance'
-                
-                article = {
-                    'title': str(title)[:200],  # Limit length
-                    'description': str(description)[:500],  # Limit length  
-                    'url': str(url),
-                    'published_date': published_date,
-                    'source': str(source)
-                }
-                
-                print(f"✅ Article {i+1}: '{title[:50]}...'")
-                articles.append(article)
+                    # Validate we have content
+                    if len(str(title)) < 3 and len(str(description)) < 3:
+                        print(f"⚠️ Skipping article {i+1} - no meaningful content")
+                        continue
+                    
+                    article = {
+                        'title': str(title)[:200],
+                        'description': str(description)[:500],
+                        'url': str(url),
+                        'published_date': published_date,
+                        'source': str(source)
+                    }
+                    
+                    print(f"✅ Article {i+1}: '{title[:50]}...'")
+                    articles.append(article)
+                    
+                except Exception as e:
+                    print(f"❌ Error processing article {i+1}: {e}")
+                    continue
             
             print(f"✅ Found {len(articles)} valid articles for {symbol}")
             return articles
