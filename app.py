@@ -2809,31 +2809,28 @@ def api_sector_analysis():
         return jsonify({"error": str(e)})
 
 
-@app.route('/api/debug/<symbol>')
-def debug_news(symbol):
-    """Debug what's happening with news analysis"""
+@app.route('/api/debug-raw/<symbol>')
+def debug_raw_news(symbol):
+    """Debug raw Yahoo Finance news data structure"""
     try:
-        # Get raw news first
-        news_articles = advanced_analyzer.news_analyzer.get_stock_news(symbol.upper())
+        import yfinance as yf
+        ticker = yf.Ticker(symbol.upper())
+        news = ticker.news
         
         debug_info = {
             'symbol': symbol.upper(),
-            'articles_found': len(news_articles),
-            'articles': []
+            'raw_news_count': len(news) if news else 0,
+            'first_article_keys': [],
+            'first_article_sample': {}
         }
         
-        # Analyze each article manually
-        for i, article in enumerate(news_articles[:3]):
-            text = f"{article['title']} {article['description']}"
-            sentiment = advanced_analyzer.news_analyzer.analyze_sentiment(text)
-            
-            debug_info['articles'].append({
-                'title': article['title'][:100],
-                'source': article['source'],
-                'sentiment_score': sentiment['score'],
-                'sentiment_label': sentiment['label'],
-                'text_length': len(text)
-            })
+        if news and len(news) > 0:
+            first_article = news[0]
+            debug_info['first_article_keys'] = list(first_article.keys())
+            debug_info['first_article_sample'] = {
+                key: str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                for key, value in first_article.items()
+            }
         
         return jsonify(debug_info)
         
