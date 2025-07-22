@@ -2809,6 +2809,38 @@ def api_sector_analysis():
         return jsonify({"error": str(e)})
 
 
+@app.route('/api/debug/<symbol>')
+def debug_news(symbol):
+    """Debug what's happening with news analysis"""
+    try:
+        # Get raw news first
+        news_articles = advanced_analyzer.news_analyzer.get_stock_news(symbol.upper())
+        
+        debug_info = {
+            'symbol': symbol.upper(),
+            'articles_found': len(news_articles),
+            'articles': []
+        }
+        
+        # Analyze each article manually
+        for i, article in enumerate(news_articles[:3]):
+            text = f"{article['title']} {article['description']}"
+            sentiment = advanced_analyzer.news_analyzer.analyze_sentiment(text)
+            
+            debug_info['articles'].append({
+                'title': article['title'][:100],
+                'source': article['source'],
+                'sentiment_score': sentiment['score'],
+                'sentiment_label': sentiment['label'],
+                'text_length': len(text)
+            })
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route('/api/debug-raw/<symbol>')
 def debug_raw_news(symbol):
     """Debug raw Yahoo Finance news data structure"""
