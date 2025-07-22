@@ -2870,6 +2870,45 @@ def debug_raw_news(symbol):
         return jsonify({"error": str(e)})
 
 
+@app.route('/api/debug-parsed/<symbol>')
+def debug_parsed_news(symbol):
+    """Debug parsed Yahoo Finance news data"""
+    try:
+        import yfinance as yf
+        import ast
+        ticker = yf.Ticker(symbol.upper())
+        news = ticker.news
+        
+        debug_info = {
+            'symbol': symbol.upper(),
+            'raw_news_count': len(news) if news else 0,
+            'parsed_articles': []
+        }
+        
+        if news and len(news) > 0:
+            for i, item in enumerate(news[:3]):  # First 3 articles
+                try:
+                    content_str = str(item.get('content', ''))
+                    if content_str:
+                        # Try to parse
+                        content_data = ast.literal_eval(content_str)
+                        debug_info['parsed_articles'].append({
+                            'title': content_data.get('title', 'No title')[:100],
+                            'summary': content_data.get('summary', 'No summary')[:100],
+                            'publisher': content_data.get('publisher', 'Unknown'),
+                            'keys_available': list(content_data.keys())
+                        })
+                    else:
+                        debug_info['parsed_articles'].append({'error': 'No content field'})
+                except Exception as e:
+                    debug_info['parsed_articles'].append({'error': str(e)})
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
