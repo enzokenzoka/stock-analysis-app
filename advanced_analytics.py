@@ -160,20 +160,61 @@ class NewsAnalyzer:
             ticker = yf.Ticker(symbol)
             news = ticker.news
             
-            articles = []
-            for item in news[:5]:  # Limit to 5 articles
-                articles.append({
-                    'title': item.get('title', ''),
-                    'description': item.get('summary', ''),
-                    'url': item.get('link', ''),
-                    'published_date': datetime.fromtimestamp(item.get('providerPublishTime', 0)).isoformat(),
-                    'source': item.get('publisher', 'Yahoo Finance')
-                })
+            if not news:
+                print(f"⚠️ No news found for {symbol}")
+                return []
             
+            articles = []
+            for i, item in enumerate(news[:5]):  # Limit to 5 articles
+                print(f"🔍 Processing article {i+1} for {symbol}")
+                print(f"🔍 Available keys: {list(item.keys())}")
+                
+                # Try multiple possible key names
+                title = (item.get('title') or 
+                        item.get('headline') or 
+                        item.get('title') or 
+                        'No title')
+                
+                description = (item.get('summary') or 
+                              item.get('description') or 
+                              item.get('snippet') or 
+                              title)  # Use title as fallback
+                
+                # Make sure we have some content
+                if len(title) < 3 and len(description) < 3:
+                    print(f"⚠️ Skipping article {i+1} - no content")
+                    continue
+                    
+                # Get other fields
+                url = item.get('link') or item.get('url') or ''
+                
+                # Handle timestamp
+                pub_time = item.get('providerPublishTime', 0)
+                if pub_time:
+                    published_date = datetime.fromtimestamp(pub_time).isoformat()
+                else:
+                    published_date = datetime.now().isoformat()
+                
+                source = item.get('publisher') or item.get('source') or 'Yahoo Finance'
+                
+                article = {
+                    'title': str(title)[:200],  # Limit length
+                    'description': str(description)[:500],  # Limit length  
+                    'url': str(url),
+                    'published_date': published_date,
+                    'source': str(source)
+                }
+                
+                print(f"✅ Article {i+1}: '{title[:50]}...'")
+                articles.append(article)
+            
+            print(f"✅ Found {len(articles)} valid articles for {symbol}")
             return articles
             
         except Exception as e:
             print(f"❌ Yahoo Finance news error for {symbol}: {e}")
+            import traceback
+            print(f"❌ Full error: {traceback.format_exc()}")
             return []
     
     def analyze_sentiment(self, text):
