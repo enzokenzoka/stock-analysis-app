@@ -639,6 +639,7 @@ def watchlist_page():
             <a href="/" class="nav-link">🏠 Home</a>
             <a href="/portfolio" class="nav-link">📊 Portfolio</a>
             <a href="/watchlist" class="nav-link active">📋 Watchlist</a>
+            <a href="/advanced" class="nav-link">🚀 Advanced</a>
         </div>
         
         <div class="add-stock-section">
@@ -1037,9 +1038,10 @@ def portfolio_dashboard():
         </div>
         
         <div class="nav-links">
-            <a href="/" class="nav-link active">🏠 Home</a>
+            <a href="/" class="nav-link">🏠 Home</a>
             <a href="/portfolio" class="nav-link">📊 Portfolio</a>
-            <a href="/watchlist" class="nav-link">📋 Watchlist</a>
+            <a href="/watchlist" class="nav-link active">📋 Watchlist</a>
+            <a href="/advanced" class="nav-link">🚀 Advanced</a>
         </div>
         
         <div class="portfolio-summary" id="portfolioSummary">
@@ -2182,9 +2184,10 @@ def dashboard():
         </div>
 
         <div class="nav-links">
-            <a href="/" class="nav-link active">🏠 Home</a>
+            <a href="/" class="nav-link">🏠 Home</a>
             <a href="/portfolio" class="nav-link">📊 Portfolio</a>
-            <a href="/watchlist" class="nav-link">📋 Watchlist</a>
+            <a href="/watchlist" class="nav-link active">📋 Watchlist</a>
+            <a href="/advanced" class="nav-link">🚀 Advanced</a>
         </div>
         
         <div class="info-card">
