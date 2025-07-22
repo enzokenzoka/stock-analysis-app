@@ -2697,32 +2697,98 @@ def advanced_dashboard():
         }
         
         function displayAdvancedAnalysis(data) {
-            let html = '<div style="text-align: center; padding: 20px;">';
+            let html = '<div style="padding: 20px;">';
             
+            // News Sentiment Section
             if (data.news_sentiment && data.news_sentiment.article_count > 0) {
                 const sentiment = data.news_sentiment;
+                
+                // Overall sentiment summary
                 html += `
-                    <div class="news-article">
+                    <div class="news-article" style="background: #e8f5e8; border-left: 4px solid #28a745;">
                         <div class="article-title">📰 News Sentiment Analysis</div>
-                        <p><strong>Overall Sentiment:</strong> ${sentiment.overall_sentiment}</p>
+                        <p><strong>Overall Sentiment:</strong> <span style="color: ${sentiment.overall_sentiment.includes('POSITIVE') ? '#28a745' : sentiment.overall_sentiment.includes('NEGATIVE') ? '#dc3545' : '#6c757d'}; font-weight: bold;">${sentiment.overall_sentiment}</span></p>
+                        <p><strong>Sentiment Score:</strong> ${sentiment.sentiment_score}</p>
                         <p><strong>Confidence:</strong> ${sentiment.confidence}%</p>
                         <p><strong>Articles Analyzed:</strong> ${sentiment.article_count}</p>
                     </div>
                 `;
+                
+                // Individual articles
+                if (sentiment.recent_articles && sentiment.recent_articles.length > 0) {
+                    html += '<h4 style="margin: 20px 0 10px 0;">📰 Recent Articles:</h4>';
+                    
+                    sentiment.recent_articles.forEach((article, index) => {
+                        const articleSentiment = article.sentiment || {};
+                        const sentimentColor = articleSentiment.label === 'POSITIVE' ? '#28a745' : 
+                                             articleSentiment.label === 'NEGATIVE' ? '#dc3545' : '#6c757d';
+                        const sentimentBg = articleSentiment.label === 'POSITIVE' ? '#d4edda' : 
+                                           articleSentiment.label === 'NEGATIVE' ? '#f8d7da' : '#f8f9fa';
+                        
+                        html += `
+                            <div class="news-article" style="background: ${sentimentBg}; border-left: 4px solid ${sentimentColor}; margin-bottom: 15px;">
+                                <div class="article-source" style="font-size: 12px; color: #666; margin-bottom: 5px;">
+                                    ${article.source} • ${new Date(article.published_date).toLocaleDateString()}
+                                </div>
+                                <div class="article-title" style="font-weight: bold; margin-bottom: 8px; color: #2c3e50;">
+                                    ${article.title}
+                                </div>
+                                <div class="article-sentiment" style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; color: white; margin-bottom: 8px; background: ${sentimentColor};">
+                                    ${articleSentiment.label} (${Math.round((articleSentiment.score || 0) * 100)}%)
+                                </div>
+                                <div style="color: #666; font-size: 14px; line-height: 1.4;">
+                                    ${(article.description || '').substring(0, 200)}${article.description && article.description.length > 200 ? '...' : ''}
+                                </div>
+                                ${article.url ? `<a href="${article.url}" target="_blank" style="font-size: 12px; color: #007bff; text-decoration: none;">Read full article →</a>` : ''}
+                            </div>
+                        `;
+                    });
+                }
+                
             } else {
                 html += '<p>📰 No recent news found for this stock</p>';
             }
             
+            // Earnings Section
             if (data.upcoming_earnings && data.upcoming_earnings.has_upcoming) {
+                const earnings = data.upcoming_earnings;
+                const daysUntil = earnings.days_until_earnings;
+                const urgencyColor = daysUntil <= 7 ? '#dc3545' : daysUntil <= 14 ? '#ffc107' : '#28a745';
+                const urgencyBg = daysUntil <= 7 ? '#f8d7da' : daysUntil <= 14 ? '#fff3cd' : '#d4edda';
+                
                 html += `
-                    <div class="news-article">
+                    <div class="news-article" style="background: ${urgencyBg}; border-left: 4px solid ${urgencyColor}; margin-top: 20px;">
                         <div class="article-title">📊 Upcoming Earnings</div>
-                        <p><strong>Next Earnings:</strong> ${data.upcoming_earnings.next_earnings_date}</p>
-                        <p><strong>Days Until:</strong> ${data.upcoming_earnings.days_until_earnings}</p>
+                        <p><strong>Next Earnings:</strong> ${earnings.next_earnings_date}</p>
+                        <p><strong>Days Until Earnings:</strong> <span style="color: ${urgencyColor}; font-weight: bold;">${daysUntil} days</span></p>
+                        ${daysUntil <= 7 ? '<p style="color: #dc3545; font-size: 12px; margin-top: 8px;">⚠️ Earnings announcement soon - expect increased volatility</p>' : ''}
                     </div>
                 `;
             } else {
-                html += '<p>📊 No upcoming earnings found</p>';
+                html += '<div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: center;"><p>📊 No upcoming earnings found</p></div>';
+            }
+            
+            // Earnings History
+            if (data.earnings_history && data.earnings_history.length > 0) {
+                html += '<h4 style="margin: 20px 0 10px 0;">📈 Recent Earnings History:</h4>';
+                
+                data.earnings_history.slice(0, 4).forEach(earning => {
+                    const surprise = earning.surprise_percent || 0;
+                    const surpriseColor = surprise > 0 ? '#28a745' : surprise < 0 ? '#dc3545' : '#6c757d';
+                    const surpriseBg = surprise > 0 ? '#d4edda' : surprise < 0 ? '#f8d7da' : '#f8f9fa';
+                    
+                    html += `
+                        <div style="background: ${surpriseBg}; padding: 12px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid ${surpriseColor};">
+                            <div>
+                                <strong>${earning.date}</strong><br>
+                                <small style="color: #666;">Estimated: $${earning.estimated_eps} | Actual: $${earning.actual_eps}</small>
+                            </div>
+                            <div style="color: ${surpriseColor}; font-weight: bold; font-size: 16px;">
+                                ${surprise > 0 ? '+' : ''}${surprise}%
+                            </div>
+                        </div>
+                    `;
+                });
             }
             
             html += '</div>';
