@@ -5,6 +5,16 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from textblob import TextBlob
+import nltk
+
+# Download required NLTK data (this fixes the sentiment analysis)
+try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
+    print("✅ NLTK data downloaded successfully")
+except Exception as e:
+    print(f"⚠️ NLTK download warning: {e}")
+    
 import sqlite3
 import yfinance as yf
 import json
@@ -169,16 +179,23 @@ class NewsAnalyzer:
     def analyze_sentiment(self, text):
         """Analyze sentiment of text using TextBlob"""
         try:
-            blob = TextBlob(text)
+            # Clean the text
+            if not text or len(text.strip()) < 5:
+                return {'score': 0, 'magnitude': 0, 'label': 'NEUTRAL'}
+            
+            blob = TextBlob(str(text))
             
             # Get polarity (-1 to 1) and subjectivity (0 to 1)
             polarity = blob.sentiment.polarity
             subjectivity = blob.sentiment.subjectivity
             
-            # Convert to label
-            if polarity > 0.1:
+            # Debug print to see what's happening
+            print(f"📊 Analyzing: '{text[:50]}...' -> Polarity: {polarity}")
+            
+            # Convert to label with better thresholds
+            if polarity > 0.05:
                 label = 'POSITIVE'
-            elif polarity < -0.1:
+            elif polarity < -0.05:
                 label = 'NEGATIVE'
             else:
                 label = 'NEUTRAL'
@@ -191,6 +208,7 @@ class NewsAnalyzer:
             
         except Exception as e:
             print(f"❌ Sentiment analysis error: {e}")
+            print(f"❌ Text was: {text[:100] if text else 'None'}")
             return {'score': 0, 'magnitude': 0, 'label': 'NEUTRAL'}
     
     def get_stock_sentiment(self, symbol):
